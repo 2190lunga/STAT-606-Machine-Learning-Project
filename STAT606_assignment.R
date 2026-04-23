@@ -1,7 +1,7 @@
 #############################################################################
 # STAT606 Assignment - Binary Classification Project
 # Divorce Prediction Model
-# Authors: [Your Name] & [Partner Name]
+# Authors: Lungani Zungu (219024060) & Ntobeko Hlongwa()
 #############################################################################
 
 # ----------------------------- #

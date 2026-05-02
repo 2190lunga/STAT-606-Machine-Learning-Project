@@ -4,9 +4,9 @@
 # Authors: Lungani Zungu (219024060) & Ntobeko Hlongwa()
 #############################################################################
 
-# ----------------------------- #
-# 1. Load Libraries
-# ----------------------------- #
+# ----------------------------------------------------------------------------- #
+# 0. Load Libraries ------------------------------------------------------------
+# ----------------------------------------------------------------------------- #
 
 library(dplyr)
 library(caTools)
@@ -18,96 +18,155 @@ library(rpart.plot)
 
 options(scipen = 999)
 
-# ----------------------------- #
-# 2. Load Data
-# ----------------------------- #
+# ----------------------------------------------------------------------------- #
+# 1. Setup & User Parameters ---------------------------------------------------
+# ----------------------------------------------------------------------------- #
+
+seed <- 606
+train_frac <- 0.7
+metric <- "F1"
+folds <- 5
+
+# ----------------------------------------------------------------------------- #
+# 2. Load, Inspect and Format Data --------------------------------------------
+# ----------------------------------------------------------------------------- #
 
 df <- read.csv("divorce_df.csv")
 
-# ----------------------------- #
-# 3. Data Understanding & Cleaning
-# ----------------------------- #
-
+# Look at the structure of the data (variable names, types, first values):
 str(df)
+
+# Summary statistics for all variables:
 summary(df)
 
-# Convert categorical variables if needed
+# Number of rows and columns:
+dim(df)
+
+# Convert all character (text) variables to factors:
 df <- df %>%
   mutate(across(where(is.character), as.factor))
 
-# ----------------------------- #
-# 4. Define Target Variable
-# ----------------------------- #
+# Convert binary 0/1 variables to factors (they are categories, not numbers):
+df$cultural_background_match <- factor(df$cultural_background_match)
+df$mental_health_issues <- factor(df$mental_health_issues)
+df$infidelity_occurred <- factor(df$infidelity_occurred)
+df$counseling_attended <- factor(df$counseling_attended)
+df$pre_marital_cohabitation <- factor(df$pre_marital_cohabitation)
+df$domestic_violence_history <- factor(df$domestic_violence_history)
+df$divorced <- factor(df$divorced)
 
-target <- names(df)[ncol(df)]   # assumes last column is target
+# Check the structure again after conversions:
+summary(df)
 
-# ----------------------------- #
-# 5. Train-Test Split (70:30)
-# ----------------------------- #
+# Check number of levels for each factor variable (looking for high cardinality):
+sapply(Filter(is.factor, df), nlevels)
 
-set.seed(606)
+# Check each categorical variable for sparse categories:
+table(df$education_level)
+table(df$employment_status)
+table(df$religious_compatibility)
+table(df$conflict_resolution_style)
+table(df$marriage_type)
 
-split <- sample.split(df[[target]], SplitRatio = 0.7)
+# Check for missing values:
+colSums(is.na(df))
 
-train <- subset(df, split == TRUE)
-test  <- subset(df, split == FALSE)
+# Check class balance of the target variable:
+summary(df$divorced)
+round(prop.table(table(df$divorced)) * 100, 2)
 
-# ----------------------------- #
-# 6. Initialize H2O
-# ----------------------------- #
+# ----------------------------------------------------------------------------- #
+# 3. Specify df and target -----------------------------------------------------
+# ----------------------------------------------------------------------------- #
+
+target <- "divorced"
+
+# ----------------------------------------------------------------------------- #
+# 4. Train/Test Split ----------------------------------------------------------
+# ----------------------------------------------------------------------------- #
+
+set.seed(seed)
+
+split <- sample.split(df[[target]], SplitRatio = train_frac)
+
+training_set <- subset(df, split == TRUE)
+test_set <- subset(df, split == FALSE)
+
+# ----------------------------------------------------------------------------- #
+# 5. Initialize H2O -----------------------------------------------------------
+# ----------------------------------------------------------------------------- #
 
 h2o.init()
 
-train_h2o <- as.h2o(train)
-test_h2o  <- as.h2o(test)
+train_h2o <- as.h2o(training_set)
+test_h2o <- as.h2o(test_set)
 
-predictors <- setdiff(names(train), target)
+# ----------------------------------------------------------------------------- #
+# 6. Specify the attribute names -----------------------------------------------
+# ----------------------------------------------------------------------------- #
 
-# ----------------------------- #
-# 7. Model 1: Logistic Regression
-# ----------------------------- #
+predictors <- setdiff(names(training_set), target)
 
-lr <- h2o.glm(
+# ----------------------------------------------------------------------------- #
+# 7. Model 1: Naive Bayes -----------------------------------------------------
+# ----------------------------------------------------------------------------- #
+
+########## --> Fit the model ----
+
+nb <- h2o.naiveBayes(
   x = predictors,
   y = target,
   training_frame = train_h2o,
-  family = "binomial"
+  laplace = 0,
+  nfolds = folds,
+  seed = seed
 )
 
-# ----------------------------- #
-# 8. Model 2: Decision Tree
-# ----------------------------- #
+########## --> Extract predicted probabilities ----
 
-dt <- rpart(
-  as.formula(paste(target, "~ .")),
-  data = train,
-  method = "class"
+preds_nb_train <- h2o.predict(nb, train_h2o)
+preds_nb_test <- h2o.predict(nb, test_h2o)
+
+preds_nb_train <- as.data.frame(preds_nb_train)
+preds_nb_test <- as.data.frame(preds_nb_test)
+
+train_nb_pred <- cbind(training_set,
+                       setNames(preds_nb_train[, 3, drop = FALSE], "pred_prob"))
+
+test_nb_pred <- cbind(test_set,
+                      setNames(preds_nb_test[, 3, drop = FALSE], "pred_prob"))
+
+########## --> Specify threshold ----
+
+threshold <- 0.5
+
+########## --> Determine the predicted class labels ----
+
+train_nb_pred$pred_class <- factor(ifelse(train_nb_pred$pred_prob > threshold, "1", "0"))
+test_nb_pred$pred_class <- factor(ifelse(test_nb_pred$pred_prob > threshold, "1", "0"))
+
+########## --> Obtain confusion matrix and model performance ----
+
+# Training set
+confusionMatrix(
+  train_nb_pred$pred_class,
+  train_nb_pred[[target]],
+  positive = "1",
+  mode = "everything"
 )
 
-# ----------------------------- #
-# 9. Model 3: Naive Bayes (placeholder)
-# ----------------------------- #
+roc_nb_train <- roc(train_nb_pred[[target]], train_nb_pred$pred_prob)
+auc(roc_nb_train)
+plot(roc_nb_train)
 
-# add later if required
+# Test set
+confusionMatrix(
+  test_nb_pred$pred_class,
+  test_nb_pred[[target]],
+  positive = "1",
+  mode = "everything"
+)
 
-# ----------------------------- #
-# 10. Predictions (Example: Logistic Regression)
-# ----------------------------- #
-
-pred_lr <- h2o.predict(lr, test_h2o)
-
-# ----------------------------- #
-# 11. Evaluation Template
-# ----------------------------- #
-
-# Example structure (reuse for all models)
-
-# confusionMatrix(...)
-# roc(...)
-# auc(...)
-
-# ----------------------------- #
-# 12. Shutdown H2O
-# ----------------------------- #
-
-h2o.shutdown(prompt = FALSE)
+roc_nb_test <- roc(test_nb_pred[[target]], test_nb_pred$pred_prob)
+auc(roc_nb_test)
+plot(roc_nb_test)

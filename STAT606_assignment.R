@@ -1,7 +1,7 @@
 #############################################################################
 # STAT606 Assignment - Binary Classification Project
 # Divorce Prediction Model
-# Authors: Lungani Zungu (219024060) & Ntobeko Hlongwa()
+# Authors: Lungani Zungu (219024060) & Ntobeko Hlongwa(219021668)
 #############################################################################
 
 # ----------------------------------------------------------------------------- #
@@ -31,7 +31,7 @@ folds <- 5
 # 2. Load, Inspect and Format Data --------------------------------------------
 # ----------------------------------------------------------------------------- #
 
-df <- read.csv("divorce_df.csv")
+df <- read.csv("C:/Users/Ntobeko.Hlongwa/Downloads/R-Practicals/divorce_df.csv")
 
 # Look at the structure of the data (variable names, types, first values):
 str(df)
@@ -170,3 +170,235 @@ confusionMatrix(
 roc_nb_test <- roc(test_nb_pred[[target]], test_nb_pred$pred_prob)
 auc(roc_nb_test)
 plot(roc_nb_test)
+
+# ----------------------------------------------------------------------------- #
+# 8. Fit a decision tree using h2o --------------------------------------------
+# ----------------------------------------------------------------------------- #
+
+
+########## --> Hyperparameter tuning ----
+
+hyper_params <- list(
+  max_depth = seq(3, 21, by = 2), 
+  min_rows = c(1, 5, 10, 20, 50)
+  #min_split_improvement= 15
+)
+
+# Define search criteria:
+search_criteria <- list(
+  strategy = "Cartesian"
+)
+
+
+h2o.rm("dtree_grid")
+
+grid <- h2o.grid(
+  algorithm = "gbm",  # gradient boosting method with ntrees = 1)
+  grid_id = "dtree_grid", # grid search ID
+  x = predictors,
+  y = target,
+  training_frame = train_h2o,
+  hyper_params = hyper_params,
+  search_criteria = search_criteria,
+  ntrees = 1,
+  learn_rate = 1.0, # Full weight per tree 
+  sample_rate = 1.0,  # use 100% of the training data
+  col_sample_rate = 1.0, # use 100% of the attributes
+  stopping_rounds = 0,
+  seed = seed,
+  nfolds =folds
+)
+
+
+model_results_dt <- h2o.getGrid("dtree_grid", sort_by = metric, decreasing = TRUE) 
+
+print(model_results_dt)
+
+
+best_model_id <- model_results_dt@model_ids[[1]] # Extract the best model ID 
+
+
+best_model <- h2o.getModel(best_model_id)
+
+
+tuned_param_names <- names(hyper_params)
+
+best_tuned_values <- lapply(tuned_param_names, function(param_name) { 
+  best_model@allparameters[[param_name]]
+})
+
+names(best_tuned_values) <- tuned_param_names
+
+########## --> Fit the model ----
+
+final_dt_model <- do.call(h2o.decision_tree, c(
+  list(
+    x = predictors,
+    y = target,
+    training_frame = train_h2o,
+    seed = seed                      
+  ),
+  best_tuned_values     
+))
+
+########## --> Extract predicted probabilities ----
+
+# Save predicted probabilities
+preds_dt_train <- h2o.predict(final_dt_model, train_h2o)
+preds_dt_test <- h2o.predict(final_dt_model, test_h2o)
+
+# Convert predictions to R data.frames to extract from H2O environment:
+preds_dt_train <- as.data.frame(preds_dt_train)
+preds_dt_test <- as.data.frame(preds_dt_test)
+
+View(preds_dt_train)
+
+train_dt_pred <- cbind(training_set,
+                       setNames(preds_dt_train[, 3, drop = FALSE], "pred_prob")) 
+
+test_dt_pred <- cbind(test_set, 
+                      setNames(preds_dt_test[, 3, drop = FALSE], "pred_prob"))  
+
+
+View(train_dt_pred)
+
+
+threshold <- 0.5
+
+########## --> Determine the predicted class labels ----
+
+# training
+train_dt_pred$pred_class <- factor(ifelse(train_dt_pred$pred_prob > threshold,"1","0"))
+
+# test
+test_dt_pred$pred_class <- factor(ifelse(test_dt_pred$pred_prob > threshold, "1", "0"))
+
+########## --> confusion matrix and model performance ----
+
+# training set
+
+# predicted classes first then actual classes for the training set
+confusionMatrix(
+  train_dt_pred$pred_class,
+  train_dt_pred[[target]],
+  positive = "1",
+  mode = "everything"
+)
+
+# actual classes first then predicted probabilities for the training set
+roc_dt_train <- pROC::roc(train_dt_pred[[target]], train_dt_pred$pred_prob)
+pROC::auc(roc_dt_train)
+plot(roc_dt_train)
+
+
+# test set
+
+# predicted classes first then actual classes for the test set
+confusionMatrix(
+  test_dt_pred$pred_class,
+  test_dt_pred[[target]],
+  positive = "1",
+  mode = "everything"
+)
+
+# actual classes first then predicted probabilities for the test set
+roc_dt_test <- pROC::roc(test_dt_pred[[target]], test_dt_pred$pred_prob)
+pROC::auc(roc_dt_test)
+plot(roc_dt_test)
+
+# ----------------------------------------------------------------------------- #
+# 9. Fit a decision tree using rpart --------------------------------------------
+# ----------------------------------------------------------------------------- #
+
+set.seed(seed)
+
+
+DT_rpart <- rpart(
+  as.formula(paste(target, "~ .")),
+  data = training_set,
+  method = "class", # for classification
+  xval = folds, # CV 
+  control = rpart.control(
+    #cp = 0.02,             # complexity parameter for pruning
+    #minsplit = 20,         # minimum observations to attempt a split
+    maxdepth = 4           # maximum depth
+  )
+) 
+
+printcp(DT_rpart)
+plotcp(DT_rpart)
+
+
+### Extract predicted probabilities:
+
+
+pred_prob_DT_train <- predict(DT_rpart, newdata = training_set, type = "prob")
+
+train_DT_rpart <- cbind(training_set, 
+                        setNames(data.frame(pred_prob_DT_train[, 2]), "pred_prob")) # probs in column 2 (for "1")
+
+# View the results:
+
+View(train_DT_rpart)
+
+
+pred_prob_DT_test <- predict(DT_rpart, newdata = test_set, type = "prob")
+
+test_DT_rpart <- cbind(test_set, 
+                       setNames(data.frame(pred_prob_DT_test[, 2]), "pred_prob")) # We only want the probs in column 2 (for "1")
+
+
+threshold <- 0.5
+
+########## --> Determine the predicted class labels ----
+
+# training set
+train_DT_rpart$pred_class <- factor(ifelse(train_DT_rpart$pred_prob > threshold, "1","0"))
+
+# test
+test_DT_rpart$pred_class <- factor(ifelse(test_DT_rpart$pred_prob > threshold,"1","0"))
+
+########## --> Obtain confusion matrix and model performance ----
+
+# training set 
+
+# predicted classes first then actual classes for the training set
+confusionMatrix(
+  train_DT_rpart$pred_class,
+  train_DT_rpart[[target]],
+  positive = "1",
+  mode = "everything"
+)
+
+# actual classes first then predicted probabilities for the training set
+roc_DT_train_rpart <- pROC::roc(train_DT_rpart[[target]], train_DT_rpart$pred_prob)
+pROC::auc(roc_DT_train_rpart)
+plot(roc_DT_train_rpart)
+
+# test set
+
+# predicted classes first then actual classes for the test set
+confusionMatrix(
+  test_DT_rpart$pred_class,
+  test_DT_rpart[[target]],
+  positive = "1",
+  mode = "everything"
+)
+
+# actual classes first then predicted probabilities for the test set
+roc_DT_test_rpart <- pROC::roc(test_DT_rpart[[target]], test_DT_rpart$pred_prob)
+pROC::auc(roc_DT_test_rpart)
+plot(roc_DT_test_rpart)
+
+
+########## --> visualize the DT ----
+
+dev.new(width = 15, height = 20) 
+
+rpart.plot(DT_rpart)
+rpart.plot(DT_rpart, yesno = 1, type = 2, fallen.leaves = FALSE) 
+
+
+# ----------------------------------------------------------------------------- #
+# 10. Fit a logistic regression model --------------------------------------------
+# ----------------------------------------------------------------------------- #

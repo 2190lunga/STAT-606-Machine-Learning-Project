@@ -2,7 +2,7 @@
 
 ## Authors
 - Lungani Zungu (219024060)
-- Ntobeko Hlongwa ()
+- Ntobeko Hlongwa (219021668)
 
 ---
 
@@ -77,8 +77,8 @@
 | Model | Train AUC | Test AUC | Overfitting? |
 |-------|-----------|----------|--------------|
 | Naive Bayes | 0.6155 | 0.5663 | No — but underfitting (poor performance on both sets) |
-| Decision Tree (H2O) | | | |
-| Decision Tree (rpart) | | | |
+| Decision Tree (H2O) |0.7076 |0.517 | Yes - performing well on the train set but poorly on the test set | 
+| Decision Tree (rpart) |0.5195 |0.5139 |No - but underfitting |
 | Logistic Regression | | | |
 
 **Best model:** [to be determined after all models are fitted]  
@@ -89,6 +89,10 @@
 ## 6. Overfitting / Underfitting Comments
 
 **Naive Bayes:** Train AUC (0.62) ≈ Test AUC (0.57) — no overfitting, but the model underfits. It performs barely better than random guessing (AUC = 0.5). The "naive" independence assumption likely does not hold for this data — predictors like trust_score and communication_score are likely correlated, which violates the assumption.
+
+**Decision Tree (H2O):** Train AUC (0.71) ~ Test AUC(0.52) - the model is overfitting. 
+**Decision Tree (rpart):** Train AUC (0.52) ~ Test AUC(0.51) -
+**Logistic Regression :** Train AUC () ~ Test AUC() -
 
 [Remaining models to be assessed]
 

@@ -31,7 +31,7 @@ folds <- 5
 # 2. Load, Inspect and Format Data --------------------------------------------
 # ----------------------------------------------------------------------------- #
 
-df <- read.csv("C:/Users/Ntobeko.Hlongwa/Downloads/R-Practicals/divorce_df.csv")
+df <- read.csv("divorce_df.csv")
 
 # Look at the structure of the data (variable names, types, first values):
 str(df)
@@ -396,9 +396,111 @@ plot(roc_DT_test_rpart)
 dev.new(width = 15, height = 20) 
 
 rpart.plot(DT_rpart)
-rpart.plot(DT_rpart, yesno = 1, type = 2, fallen.leaves = FALSE) 
+rpart.plot(DT_rpart, yesno = 1, type = 2, fallen.leaves = ) 
 
 
 # ----------------------------------------------------------------------------- #
 # 10. Fit a logistic regression model --------------------------------------------
 # ----------------------------------------------------------------------------- #
+########## --> Fit the LR model ----
+
+LR <- h2o.glm(
+  x = predictors,
+  y = target,
+  training_frame = train_h2o,
+  family = "binomial",
+  lambda = 0,
+  compute_p_values = TRUE
+)
+
+########## --> LR inference: p-values & odds ratios ----
+
+# extract the coefficients table (has columns: names, coefficients, std_error, z_value, p_value)
+LR_results <- as.data.frame(h2o.coef_with_p_values(LR))
+
+# odds ratio = e^coefficient — tells you how much the odds of divorce
+# multiply for a 1-unit increase in that feature
+LR_results$OR <- exp(LR_results$coefficients)
+
+# round p-values to 4 decimal places for readability
+LR_results$p_value <- round(LR_results$p_value, 4)
+
+View(LR_results)
+
+########## --> LR predictions ----
+
+# predict on train and test — exactly the same pattern as NB and DT
+preds_LR_train <- h2o.predict(LR, train_h2o)
+preds_LR_test  <- h2o.predict(LR, test_h2o)
+
+# convert H2O frames to regular R data.frames
+preds_LR_train <- as.data.frame(preds_LR_train)
+preds_LR_test  <- as.data.frame(preds_LR_test)
+
+# attach the predicted probability of class "1" to the original split data
+train_LR <- cbind(training_set,
+                  setNames(preds_LR_train[, 3, drop = FALSE], "pred_prob"))
+test_LR  <- cbind(test_set,
+                  setNames(preds_LR_test[, 3, drop = FALSE], "pred_prob"))
+
+########## --> LR threshold & class labels ----
+
+threshold <- 0.5
+
+train_LR$pred_class <- factor(ifelse(train_LR$pred_prob > threshold, "1", "0"))
+test_LR$pred_class  <- factor(ifelse(test_LR$pred_prob  > threshold, "1", "0"))
+
+########## --> LR confusion matrix ----
+
+confusionMatrix(train_LR$pred_class, train_LR[[target]],
+                positive = "1",
+                mode = "everything"
+)
+
+confusionMatrix(test_LR$pred_class, test_LR[[target]],
+                positive = "1",
+                mode = "everything"
+)
+
+########## --> LR ROC & AUC ----
+
+# TRAIN ROC
+roc_LR_train <- pROC::roc(train_LR[[target]], train_LR$pred_prob)
+pROC::auc(roc_LR_train)
+plot(roc_LR_train)
+
+# TEST ROC
+roc_LR_test <- pROC::roc(test_LR[[target]], test_LR$pred_prob)
+pROC::auc(roc_LR_test)
+plot(roc_LR_test)
+
+
+# ----------------------------------------------------------------------------- #
+# 11. Combined ROC Curve (Test Set) --------------------------------------------
+# ----------------------------------------------------------------------------- #
+
+# plot the first ROC curve, then layer the others on top with lines()
+plot(roc_nb_test, col = "blue", lwd = 2,
+     main = "ROC Curves - Test Set Comparison")
+lines(roc_dt_test, col = "red", lwd = 2)
+lines(roc_DT_test_rpart, col = "green", lwd = 2)
+lines(roc_LR_test, col = "purple", lwd = 2)
+
+# add a legend so we know which colour is which model
+legend("bottomright",
+       legend = c(
+         paste0("Naive Bayes (AUC = ", round(auc(roc_nb_test), 4), ")"),
+         paste0("DT H2O (AUC = ", round(auc(roc_dt_test), 4), ")"),
+         paste0("DT rpart (AUC = ", round(auc(roc_DT_test_rpart), 4), ")"),
+         paste0("Logistic Reg (AUC = ", round(auc(roc_LR_test), 4), ")")
+       ),
+       col = c("blue", "red", "green", "purple"),
+       lwd = 2
+)
+
+
+# ----------------------------------------------------------------------------- #
+# 12. Shutdown H2O -------------------------------------------------------------
+# ----------------------------------------------------------------------------- #
+
+h2o.shutdown(prompt = FALSE)
